@@ -3,6 +3,8 @@ name = "qx10"
 version = "0.1.0"
 description = "Control Sony QX-series lens-style cameras (QX10, QX100) from Linux over Wi-Fi"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "youichi", email = "yofujimo@gmail.com" }
 ]

@@ -7,6 +7,9 @@ download of full-resolution photos.
 
 The command is `qx` (also installed as `qx10`).
 
+> This is an unofficial project and is not affiliated with or endorsed by Sony.
+> Sony and Cyber-shot are trademarks of Sony Group Corporation.
+
 ## How it works
 
 Each camera has two interfaces:
@@ -113,3 +116,7 @@ Example: `qx set mode Aperture && qx set fnumber 2.8`.
 - The QX100 needs firmware v3.00. On v1.00 most settings return error 403.
   Sony's updater runs on Windows or Mac only.
 - Only one client at a time. Close the phone app first.
+
+## License
+
+[MIT](LICENSE)

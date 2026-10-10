@@ -21,7 +21,7 @@ def _visible_ssids(iface: str | None) -> list[str]:
 
 
 def _ssid_matches(profile: CameraProfile, ssid: str) -> bool:
-    # Camera APs are named DIRECT-xxxx:DSC-<MODEL>, e.g. DIRECT-imQ0:DSC-QX100.
+    # Camera APs are named DIRECT-xxxx:DSC-<MODEL>, e.g. DIRECT-xxxx:DSC-QX100.
     return ssid == profile.ssid if profile.ssid else ssid.endswith(f":DSC-{profile.name.upper()}")
 
 

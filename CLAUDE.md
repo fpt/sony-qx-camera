@@ -21,12 +21,13 @@ values into tracked files. `.env.example` is the template.
 
 ## Hardware facts
 
-Both units run firmware v3.00 (read from the EXIF `Software` tag of a shot) with server "Smart Remote
-Control" 2.1.1 and API 1.0/1.1. Both answer at `10.0.0.1`, and the PC gets `10.0.1.1/16`.
+Observed on a QX10 and a QX100, both on firmware v3.00 (read from the EXIF `Software` tag of a shot),
+with server "Smart Remote Control" 2.1.1 and API 1.0/1.1. Both answer at `10.0.0.1`, and the PC
+gets an address in `10.0.0.0/16`.
 
 | | QX10 | QX100 |
 |---|---|---|
-| AP | `DIRECT-M3Q0:DSC-QX10`, channel 1 | `DIRECT-imQ0:DSC-QX100`, channel 1 |
+| AP | `DIRECT-xxxx:DSC-QX10`, 2.4 GHz | `DIRECT-xxxx:DSC-QX100`, 2.4 GHz |
 | NM profile | `qx10` | `qx100` |
 | Exposure modes | iAuto, Superior Auto, Program Auto | adds Aperture (f/1.8–11), Shutter (30"–1/2000) |
 | ISO | AUTO, 100–3200 | AUTO, 160–12800 |
@@ -38,17 +39,17 @@ Control" 2.1.1 and API 1.0/1.1. Both answer at `10.0.0.1`, and the PC gets `10.0
 
 - ISO/WB/EV and their getters only appear in `getAvailableApiList` in Program Auto, Aperture, or
   Shutter mode. In Intelligent Auto, `getAvailable*` for them returns error 1.
-- `getMethodTypes` takes a version param (`"1.0"`) on the QX100, and it lists methods the firmware
-  doesn't actually serve. Trust `getAvailableApiList` plus a real call.
-- The QX100 was on v1.00 when first connected. There, most getters and setters returned **HTTP 403**
+- `getMethodTypes` takes a version param (`"1.0"`) on the QX100, and on v1.00 it listed methods the firmware
+  didn't actually serve. Trust `getAvailableApiList` plus a real call.
+- On QX100 firmware v1.00, most getters and setters return **HTTP 403**
   with a JSON error body, even when listed as available. `Camera.call` parses that body. The fix
-  was Sony's v3.00 updater, which runs on Windows/Mac only.
+  is Sony's v3.00 updater, which runs on Windows/Mac only.
 - USB is mass storage only. The camera turns Wi-Fi off while on USB data, so power it from a charger.
-- Wi-Fi is 2.4 GHz only. The working adapter is an MT7601U (`wlxa047d745940e`). The Archer T1U
-  (`mt76x0u`) is 5 GHz-only and can't see the camera.
+- Wi-Fi is 2.4 GHz only. An MT7601U USB adapter (in-kernel `mt7601u`) works. The Archer T1U
+  (`mt76x0u`) is 5 GHz-only and can't see the camera. Set `QX_IFACE` to pick the adapter.
 - `nmcli -t` escapes `:` in SSIDs as `\:`, so unescape it before matching `DIRECT-…:DSC-…`.
-- NetworkManager changes need `sudo` here (polkit denies them without a password), so the
-  agent can't run `qx connect` itself; ask the user to (`uv run qx -c qx100 connect`).
+- NetworkManager changes usually need `sudo` (polkit denies them from a non-interactive shell),
+  so the agent can't run `qx connect` itself; ask the user to (`uv run qx -c qx100 connect`).
 - `actZoom ... "1shot"` returns success but doesn't move. Use timed `start`/`stop` bursts
   (0.2 s does nothing, 0.3 s is ~12%, 0.4 s ~19%). `start` alone runs to the end stop and
   returns immediately.
@@ -72,4 +73,4 @@ There are no unit tests. Check against the real camera(s): `uv run qx info`, `se
 `shoot`. Shots land on the card **and** in `photos/` (gitignored). To exercise the viewer without
 opening a window, drive `Viewer` methods directly and render `_overlay()` to a PNG.
 Put camera settings you changed for a test back afterwards (e.g. beep, zoom, AF point, shoot mode,
-exposure mode). Both cameras were left in Intelligent Auto, AF-S, still mode, zoomed fully out.
+exposure mode).
