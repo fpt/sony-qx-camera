@@ -1,0 +1,20 @@
+[project]
+name = "qx10"
+version = "0.1.0"
+description = "Control a Sony DSC-QX10 lens-style camera from Linux over Wi-Fi"
+readme = "README.md"
+authors = [
+    { name = "youichi", email = "yofujimo@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.3",
+    "opencv-python>=5.0.0.93",
+]
+
+[project.scripts]
+qx10 = "qx10.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"

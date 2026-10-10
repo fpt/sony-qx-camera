@@ -1,0 +1,13 @@
+# Secrets
+.env
+
+# Downloads
+photos/
+
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+*.egg-info
+.venv
