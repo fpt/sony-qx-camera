@@ -1,4 +1,4 @@
-"""Command-line entry point: `uv run qx10 <command>`."""
+"""Command-line entry point: `uv run qx <command>` (also installed as `qx10`)."""
 
 from __future__ import annotations
 
@@ -10,24 +10,51 @@ import time
 from pathlib import Path
 
 from . import settings
-from .api import Camera, CameraError
-from .config import Config
+from .api import ERR_FORBIDDEN, Camera, CameraError
+from .config import CameraProfile, Config
+
+
+def _visible_ssids(iface: str | None) -> list[str]:
+    cmd = ["nmcli", "-t", "-f", "SSID", "dev", "wifi", "list"] + (["ifname", iface] if iface else [])
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    return [line.replace("\\:", ":") for line in out.splitlines()]  # terse mode escapes ':' as '\:'
+
+
+def _ssid_matches(profile: CameraProfile, ssid: str) -> bool:
+    # Camera APs are named DIRECT-xxxx:DSC-<MODEL>, e.g. DIRECT-imQ0:DSC-QX100.
+    return ssid == profile.ssid if profile.ssid else ssid.endswith(f":DSC-{profile.name.upper()}")
 
 
 def cmd_connect(cfg: Config, cam: Camera, args) -> None:
+    if not cfg.cameras:
+        sys.exit("no cameras in .env; add e.g. QX10_SSID and QX10_PASSWORD")
+    visible = _visible_ssids(cfg.iface)
+    name = args.camera or cfg.default_camera
+    if not name:
+        seen = [p.name for p in cfg.cameras.values() if any(_ssid_matches(p, s) for s in visible)]
+        if len(seen) != 1:
+            found = ", ".join(seen) if seen else "none"
+            sys.exit(f"can't tell which camera to join (in range: {found}); use -c {{{','.join(cfg.cameras)}}}")
+        name = seen[0]
+    profile = cfg.cameras.get(name)
+    if not profile or not profile.password:
+        sys.exit(f"{name.upper()}_PASSWORD is not set in .env")
+    ssid = profile.ssid or next((s for s in visible if _ssid_matches(profile, s)), None)
+    if not ssid:
+        sys.exit(f"{name} is not in range; is it on? (set {name.upper()}_SSID to skip the scan)")
+
     exists = subprocess.run(
         ["nmcli", "-t", "-f", "NAME", "connection", "show"], capture_output=True, text=True, check=True
     ).stdout.splitlines()
-    if cfg.connection not in exists:
-        if not (cfg.ssid and cfg.password):
-            sys.exit("QX_SSID and QX_PASSWORD must be set in .env to create the connection profile")
-        add = ["sudo", "nmcli", "connection", "add", "type", "wifi", "con-name", cfg.connection,
-               "ssid", cfg.ssid, "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", cfg.password,
+    if profile.name not in exists:
+        add = ["sudo", "nmcli", "connection", "add", "type", "wifi", "con-name", profile.name,
+               "ssid", ssid, "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", profile.password,
                "ipv4.never-default", "yes", "ipv6.method", "disabled", "connection.autoconnect", "no"]
         if cfg.iface:
             add[6:6] = ["ifname", cfg.iface]
         subprocess.run(add, check=True)
-    subprocess.run(["sudo", "nmcli", "connection", "up", cfg.connection], check=True)
+    print(f"joining {ssid} ...")
+    subprocess.run(["sudo", "nmcli", "connection", "up", profile.name], check=True)
 
 
 def cmd_info(cfg: Config, cam: Camera, args) -> None:
@@ -49,8 +76,19 @@ def cmd_settings(cfg: Config, cam: Camera, args) -> None:
 
 
 def cmd_set(cfg: Config, cam: Camera, args) -> None:
-    settings.apply(cam, args.name, args.value)
-    current, _ = settings.read_all(cam)[args.name]
+    try:
+        settings.apply(cam, args.name, args.value)
+    except CameraError as e:
+        if e.code not in (1, ERR_FORBIDDEN):
+            raise
+        sys.exit(f"camera: {e}\n`{args.name}` isn't available now; check `qx settings` "
+                 "(ISO/WB/EV need `set mode \"Program Auto\"`, fnumber needs Aperture, shutter needs Shutter)")
+    # The camera reports the new value with a short delay.
+    for _ in range(10):
+        current, _ = settings.read_all(cam)[args.name]
+        if str(current) == args.value:
+            break
+        time.sleep(0.3)
     print(f"{args.name} = {current}")
 
 
@@ -89,7 +127,7 @@ def cmd_movie(cfg: Config, cam: Camera, args) -> None:
     if args.action == "start":
         cam.set_shoot_mode("movie")
         cam.call("startMovieRec")
-        print("recording; stop with: qx10 movie stop")
+        print("recording; stop with: qx movie stop")
     else:
         cam.call("stopMovieRec")
         cam.set_shoot_mode("still")
@@ -140,10 +178,11 @@ def cmd_call(cfg: Config, cam: Camera, args) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="qx10", description="Control a Sony DSC-QX10 over Wi-Fi")
+    parser = argparse.ArgumentParser(prog="qx", description="Control a Sony QX-series camera (QX10, QX100) over Wi-Fi")
+    parser.add_argument("-c", "--camera", type=str.lower, help="camera profile from .env (e.g. qx10, qx100)")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("connect", help="join the camera's Wi-Fi (uses sudo nmcli and .env)").set_defaults(
+    sub.add_parser("connect", help="join a camera's Wi-Fi (uses sudo nmcli and .env; picks the one in range)").set_defaults(
         func=cmd_connect
     )
     sub.add_parser("info", help="show server version, status, zoom, storage").set_defaults(func=cmd_info)
@@ -200,7 +239,7 @@ def main() -> None:
         if args.command == "connect":
             raise
         sys.exit(f"cannot reach the camera at {cfg.endpoint}: {e}\n"
-                 f"is it on and joined? try: uv run qx10 connect")
+                 f"is it on and joined? try: uv run qx connect")
     except KeyboardInterrupt:
         sys.exit(130)
 

@@ -1,7 +1,7 @@
 [project]
 name = "qx10"
 version = "0.1.0"
-description = "Control a Sony DSC-QX10 lens-style camera from Linux over Wi-Fi"
+description = "Control Sony QX-series lens-style cameras (QX10, QX100) from Linux over Wi-Fi"
 readme = "README.md"
 authors = [
     { name = "youichi", email = "yofujimo@gmail.com" }
@@ -13,6 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
+qx = "qx10.cli:main"
 qx10 = "qx10.cli:main"
 
 [build-system]

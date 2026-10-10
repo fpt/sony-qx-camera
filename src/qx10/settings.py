@@ -2,6 +2,9 @@
 
 Values are passed as strings on the command line, e.g. `iso 800`,
 `size 16:9/13M`, `wb Daylight`, `ev -3` (exposure steps are 1/3 EV).
+Which settings exist depends on the model, firmware, and exposure mode:
+ISO/WB/EV need Program Auto or higher; fnumber needs mode Aperture and
+shutter needs mode Shutter (QX100 only).
 """
 
 from __future__ import annotations
@@ -9,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .api import Camera
+from .api import Camera, CameraError
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,9 @@ SETTINGS: dict[str, Setting] = {
     "postview": Setting(
         "postviewImageSize", "currentPostviewImageSize", "postviewImageSizeCandidates", "setPostviewImageSize"
     ),
+    "fnumber": Setting("fNumber", "currentFNumber", "fNumberCandidates", "setFNumber"),
+    "shutter": Setting("shutterSpeed", "currentShutterSpeed", "shutterSpeedCandidates", "setShutterSpeed"),
+    "focus": Setting("focusMode", "currentFocusMode", "focusModeCandidates", "setFocusMode"),
     "timer": Setting("selfTimer", "currentSelfTimer", "selfTimerCandidates", "setSelfTimer", True),
     "beep": Setting("beepMode", "currentBeepMode", "beepModeCandidates", "setBeepMode"),
     "shoot": Setting("shootMode", "currentShootMode", "shootModeCandidates", "setShootMode"),
@@ -47,7 +53,11 @@ def read_all(cam: Camera) -> dict[str, tuple[Any, list[Any]]]:
         entry = status.get(s.event_type)
         if not isinstance(entry, dict):
             continue
-        out[name] = (_current(name, entry), _candidates(cam, name, entry))
+        try:
+            candidates = _candidates(cam, name, entry)
+        except CameraError:  # e.g. getAvailableWhiteBalance in Intelligent Auto
+            candidates = []
+        out[name] = (_current(name, entry), candidates)
     return out
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import itertools
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator
@@ -46,8 +47,15 @@ class Camera:
             {"method": method, "params": list(params), "id": next(self._ids), "version": version}
         ).encode()
         req = urllib.request.Request(self.endpoint, data=body, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
-            reply = json.load(resp)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
+                reply = json.load(resp)
+        except urllib.error.HTTPError as e:
+            # Older firmware (QX100, server 2.0.0) sends the JSON error with HTTP status 403.
+            try:
+                reply = json.load(e)
+            except ValueError:
+                raise e from None
         if "error" in reply:
             raise CameraError(method, *reply["error"])
         # getMethodTypes answers with "results" instead of "result".

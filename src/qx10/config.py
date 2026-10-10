@@ -1,8 +1,13 @@
-"""Settings from environment variables, with a project-level .env as fallback."""
+"""Settings from environment variables, with a project-level .env as fallback.
+
+Each camera is a profile named by a prefix, e.g. QX10_SSID / QX10_PASSWORD
+and QX100_SSID / QX100_PASSWORD. Shared settings use the QX_ prefix.
+"""
 
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,27 +36,42 @@ def load_dotenv(path: Path) -> dict[str, str]:
 
 
 @dataclass
-class Config:
+class CameraProfile:
+    name: str  # lower-case profile name, also the NetworkManager connection name
     ssid: str | None
     password: str | None
+
+
+@dataclass
+class Config:
+    cameras: dict[str, CameraProfile]
+    default_camera: str | None
     iface: str | None
-    connection: str
     endpoint: str
     outdir: Path
 
     @classmethod
     def load(cls) -> Config:
         dotenv = find_dotenv()
-        file_values = load_dotenv(dotenv) if dotenv else {}
+        values = (load_dotenv(dotenv) if dotenv else {}) | {
+            k: v for k, v in os.environ.items() if k.startswith("QX") and v
+        }
 
-        def get(key: str, default: str | None = None) -> str | None:
-            return os.environ.get(key) or file_values.get(key) or default
+        cameras = {}
+        for key in values:
+            m = re.fullmatch(r"(QX\d+)_(SSID|PASSWORD)", key)
+            if m:
+                prefix = m.group(1)
+                cameras[prefix.lower()] = CameraProfile(
+                    name=prefix.lower(),
+                    ssid=values.get(f"{prefix}_SSID"),
+                    password=values.get(f"{prefix}_PASSWORD"),
+                )
 
         return cls(
-            ssid=get("QX_SSID"),
-            password=get("QX_PASSWORD"),
-            iface=get("QX_IFACE"),
-            connection=get("QX_CONNECTION", "qx10"),
-            endpoint=get("QX_ENDPOINT", DEFAULT_ENDPOINT),
-            outdir=Path(get("QX_OUTDIR", "photos")).expanduser(),
+            cameras=dict(sorted(cameras.items())),
+            default_camera=(values.get("QX_CAMERA") or "").lower() or None,
+            iface=values.get("QX_IFACE"),
+            endpoint=values.get("QX_ENDPOINT", DEFAULT_ENDPOINT),
+            outdir=Path(values.get("QX_OUTDIR", "photos")).expanduser(),
         )
