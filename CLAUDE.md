@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Linux CLI/GUI for Sony QX-series cameras (DSC-QX10, DSC-QX100) over the Wi-Fi Camera Remote API.
+Linux CLI/GUI for Sony cameras over the Wi-Fi Camera Remote API: QX-series (DSC-QX10, DSC-QX100) and
+Alpha a6300 (ILCE-6300) and Alpha 7R III (ILCE-7RM3).
 Python, managed with **uv** (`uv run qx ...`, `uv add <pkg>`; don't use pip). The package is still
 named `qx10`, and the `qx10` script is an alias of `qx`. OpenCV HighGUI is the preview window
 (the system Python has no tkinter).
@@ -12,7 +13,9 @@ named `qx10`, and the `qx10` script is an alias of `qx`. OpenCV HighGUI is the p
 - `src/qx10/viewer.py`: preview window with threads for liveview, getEvent long-poll, and actions
 - `src/qx10/cli.py`: argparse subcommands
 - `src/qx10/config.py`: reads the environment or `.env`. Per-camera profiles are `<MODEL>_SSID` /
-  `<MODEL>_PASSWORD` (e.g. `QX10_`, `QX100_`); shared settings use `QX_` (`QX_IFACE`, `QX_CAMERA`, ...).
+  `<MODEL>_PASSWORD`, optional `<MODEL>_ENDPOINT` (e.g. `QX10_`, `QX100_`, `A6300_`); shared settings use
+  `QX_` (`QX_IFACE`, `QX_CAMERA`, ...). Without `-c`, the CLI uses the endpoint of the profile whose
+  NetworkManager connection is active on `QX_IFACE`.
 
 ## Secrets
 
@@ -36,6 +39,35 @@ gets an address in `10.0.0.0/16`.
 | Still sizes | 4:3 18M/5M, 16:9 13M/2M | 3:2 20M/5M, 16:9 17M/4.2M, 4:3 18M/5M, 1:1 13M/3.7M |
 | Zoom bursts | first burst from wide reports 0%; then 0.3 s ≈ 12% | 0.3 s ≈ 12%, including the first |
 | Liveview | ~21 fps | ~5 fps (seen at night indoors; possibly light-dependent) |
+
+### a6300 (ILCE-6300, firmware v2.01, "Smart Remote Control SR/4.31" 2.1.4, API 1.0–1.4)
+
+- The AP is `DIRECT-xxxx:ILCE-6300`; the PC gets `192.168.122.x/24`. Found by SSDP
+  (`ST: urn:schemas-sony-com:service:ScalarWebAPI:1`, sent out the Wi-Fi interface): the device
+  description lists `camera`, `avContent`, `guide`, and `accessControl` at `http://192.168.122.1:8080/sony`.
+- Only ~10 methods until `startRecMode`. After it, the list grows over ~2 s (28, then 67 methods).
+  `Camera.ensure_rec_mode()` handles this, and the CLI calls it for every command except `connect`/`call`.
+- Exposure mode/F/shutter/ISO/EV follow the mode dial; in iAuto their candidate lists are empty.
+- Focus modes: AF-S, AF-C, DMF, MF. `setTouchAFPosition` only appears in an AF mode (error 1 in MF).
+- Zoom is Clear Image Zoom (`getZoomSetting`) with a non-power-zoom lens; the burst zoom code works.
+- Postview `Original` gives the full 6000x4000 JPEG (~6 MB, ~14 s). Liveview is ~21 fps.
+
+### a7R III (ILCE-7RM3, firmware v3.10, built-in "Smart Remote Control" 2.1.7, API 1.0–1.8)
+
+- Started from the camera's Menu → Network → Ctrl w/ Smartphone. AP `DIRECT-xxxx:ILCE-7RM3` on
+  channel 11; the PC got `192.168.0.x/16`. SSDP device description: `camera`, `system`, `guide`, and
+  `accessControl` at `http://192.168.122.1:10000/sony`, plus a `DigitalImaging` (PTP/IP) service.
+- No `startRecMode` needed: all 57 methods are there at once.
+- Missing: `actZoom`, `setTouchAFPosition`, `setFocusMode`, `setPostviewImageSize`/`getPostviewImageSize`
+  (error 40401), and storage or battery info in getEvent at any version. Unavailable methods return
+  error 1, and the CLI adds a hint (`_unsupported_hint`).
+- `actTakePicture` returns **40400** (shooting failed) unless AF has already locked.
+  `Camera.take_picture` then half-presses, waits for `focusStatus` (getEvent ≥1.1) to be
+  Focused/Failed, and shoots.
+- The postview is 1616x1080 only. `shoot` warns that the original stays on the card.
+- Liveview is ~28 fps. ISO goes AUTO, 50–102400, and EV -15..15. Shoot modes: still, movie, "slow and quick".
+
+### QX notes (the API behaviour below also applies to the a6300 unless noted above)
 
 - ISO/WB/EV and their getters only appear in `getAvailableApiList` in Program Auto, Aperture, or
   Shutter mode. In Intelligent Auto, `getAvailable*` for them returns error 1.
@@ -61,7 +93,7 @@ gets an address in `10.0.0.0/16`.
 - `getStorageInformation` returns 403. Read storage from getEvent instead.
 - `getAvailable*` methods take no params. Passing `["1.0"]` gives error 3.
 - Settings changes show up in getEvent a moment later, so `qx set` polls before printing.
-- Liveview: 640x480 JPEG (frame rate per model in the table above). Packets are an 8-byte common header and a 128-byte payload
+- Liveview: 640x480 JPEG on the QX models (frame rate per model in the table above). Packets are an 8-byte common header and a 128-byte payload
   header (start code `24 35 68 79`, 3-byte size, 1-byte padding). Only type 0x01 frames are
   sent; there's no focus-frame info.
 - Setting postview to `Original` makes `actTakePicture` return the full-size JPEG (QX10 4896x3672,

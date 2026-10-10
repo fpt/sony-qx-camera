@@ -22,6 +22,7 @@ DEFAULT_ENDPOINT = "http://10.0.0.1:10000/sony/camera"
 # Error codes from the Camera Remote API reference.
 ERR_ILLEGAL_ARGUMENT = 3
 ERR_FORBIDDEN = 403  # method not available in the current camera state
+ERR_SHOOTING_FAILED = 40400  # e.g. AF could not lock
 ERR_NOT_READY = 40401
 ERR_CAPTURE_NOT_FINISHED = 40403  # follow up with awaitTakePicture
 
@@ -61,6 +62,24 @@ class Camera:
         # getMethodTypes answers with "results" instead of "result".
         return reply.get("result", reply.get("results"))
 
+    def ensure_rec_mode(self, timeout: float = 15.0) -> None:
+        """Enter shooting mode on bodies that need it (Alpha, RX); a no-op on the QX series.
+
+        Until startRecMode, such bodies expose only ~10 methods; afterwards the
+        full list appears over a few seconds.
+        """
+        apis = self.call("getAvailableApiList")[0]
+        if "startRecMode" not in apis or "actTakePicture" in apis:
+            return
+        self.call("startRecMode", timeout=20)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if "actTakePicture" in self.call("getAvailableApiList")[0]:
+                time.sleep(1.0)  # settings in getEvent fill in a moment later
+                return
+            time.sleep(0.5)
+        raise CameraError("startRecMode", ERR_NOT_READY, "camera did not enter shooting mode")
+
     def event(self, long_poll: bool = False) -> dict[str, Any]:
         """Return getEvent's status entries keyed by their "type".
 
@@ -84,9 +103,36 @@ class Camera:
         try:
             return self.call("actTakePicture", timeout=30)[0]
         except CameraError as e:
-            if e.code != ERR_CAPTURE_NOT_FINISHED:
-                raise
-            return self.call("awaitTakePicture", timeout=30)[0]
+            if e.code == ERR_CAPTURE_NOT_FINISHED:
+                return self.call("awaitTakePicture", timeout=30)[0]
+            if e.code == ERR_SHOOTING_FAILED and "actHalfPressShutter" in self.call("getAvailableApiList")[0]:
+                # The a7R III fails actTakePicture unless AF has already locked.
+                return self._take_picture_after_focus()
+            raise
+
+    def _take_picture_after_focus(self, timeout: float = 5.0) -> list[str]:
+        self.call("actHalfPressShutter", timeout=15)
+        try:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and self.focus_status() not in ("Focused", "Failed"):
+                time.sleep(0.2)
+            return self.call("actTakePicture", timeout=30)[0]
+        finally:
+            self.call("cancelHalfPressShutter")
+
+    def focus_status(self) -> str | None:
+        """"Focused", "Failed", "Focusing", "Not Focusing", or None if not reported.
+
+        focusStatus is only in getEvent version 1.1 and later.
+        """
+        try:
+            result = self.call("getEvent", False, version="1.1")
+        except CameraError:
+            return None
+        for item in result:
+            if isinstance(item, dict) and item.get("type") == "focusStatus":
+                return item["focusStatus"]
+        return None
 
     def zoom(self, direction: str, seconds: float = 0.3) -> None:
         """Zoom "in" or "out" for a short burst.

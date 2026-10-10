@@ -21,8 +21,34 @@ def _visible_ssids(iface: str | None) -> list[str]:
 
 
 def _ssid_matches(profile: CameraProfile, ssid: str) -> bool:
-    # Camera APs are named DIRECT-xxxx:DSC-<MODEL>, e.g. DIRECT-xxxx:DSC-QX100.
+    # Camera APs are named DIRECT-xxxx:<MODEL>, e.g. DIRECT-xxxx:DSC-QX100 or DIRECT-xxxx:ILCE-6300.
+    # Without a configured SSID only the DSC-<profile name> form can be guessed.
     return ssid == profile.ssid if profile.ssid else ssid.endswith(f":DSC-{profile.name.upper()}")
+
+
+def _joined_camera(cfg: Config) -> str | None:
+    """Profile name of the camera the Wi-Fi adapter is currently joined to, if any."""
+    if not cfg.iface:
+        return None
+    try:
+        out = subprocess.run(
+            ["nmcli", "-g", "GENERAL.CONNECTION", "dev", "show", cfg.iface],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out if out in cfg.cameras else None
+
+
+def _unsupported_hint(cam: Camera, e: CameraError) -> str:
+    """Explain an error caused by calling a method the camera doesn't offer (right now)."""
+    try:
+        available = cam.call("getAvailableApiList")[0]
+    except Exception:
+        return ""
+    if e.method in available or e.method in ("getEvent", "getMethodTypes", "getVersions"):
+        return ""
+    return f"\n{e.method} isn't available on this camera (or in its current mode)"
 
 
 def cmd_connect(cfg: Config, cam: Camera, args) -> None:
@@ -64,8 +90,9 @@ def cmd_info(cfg: Config, cam: Camera, args) -> None:
     print(f"api:       {', '.join(cam.call('getVersions')[0])}")
     status = cam.event()
     print(f"status:    {status.get('cameraStatus', {}).get('cameraStatus')}")
-    zoom = status.get("zoomInformation", {})
-    print(f"zoom:      {zoom.get('zoomPosition')}%")
+    zoom = status.get("zoomInformation") or {}
+    if zoom.get("zoomPosition", -1) >= 0:
+        print(f"zoom:      {zoom['zoomPosition']}%")
     for storage in status.get("storageInformation", []):
         print(f"storage:   {storage['storageID']}: {storage['numberOfRecordableImages']} images left")
 
@@ -92,12 +119,22 @@ def cmd_set(cfg: Config, cam: Camera, args) -> None:
     print(f"{args.name} = {current}")
 
 
+def _use_postview(cam: Camera, want: str) -> None:
+    """Make actTakePicture return the `want` size where the camera lets us choose."""
+    if "setPostviewImageSize" not in cam.call("getAvailableApiList")[0]:
+        # e.g. the a7R III: it always returns a ~2M postview; the original stays on the card.
+        if want == "Original":
+            print("note: this camera only sends a reduced-size copy; the original stays on its card",
+                  file=sys.stderr)
+        return
+    if cam.call("getPostviewImageSize")[0] != want:
+        cam.call("setPostviewImageSize", want)
+
+
 def cmd_shoot(cfg: Config, cam: Camera, args) -> None:
     outdir = args.output or cfg.outdir
     if not args.no_download:
-        want = "2M" if args.small else "Original"
-        if cam.call("getPostviewImageSize")[0] != want:
-            cam.call("setPostviewImageSize", want)
+        _use_postview(cam, "2M" if args.small else "Original")
     if args.af:
         x, y = (_percent(v) for v in args.af)
         print(f"focus at {x:g}%,{y:g}%: {'OK' if cam.focus_at(x, y) else 'failed'}")
@@ -143,7 +180,12 @@ def cmd_af(cfg: Config, cam: Camera, args) -> None:
         print("focus point set" if entry["currentSet"] else "no focus point (camera picks the AF area)")
     else:
         x, y = _percent(args.x), _percent(args.y)
-        ok = cam.focus_at(x, y)
+        try:
+            ok = cam.focus_at(x, y)
+        except CameraError as e:
+            if e.code != 1 or "setFocusMode" not in cam.call("getAvailableApiList")[0]:
+                raise
+            sys.exit(f"camera: {e}\ntouch AF needs an autofocus mode; try: qx set focus AF-S")
         print(f"focus at {x:g}%,{y:g}%: {'OK' if ok else 'failed'}")
         if not ok:
             sys.exit(1)
@@ -162,8 +204,7 @@ def _percent(value: str | None) -> float:
 def cmd_view(cfg: Config, cam: Camera, args) -> None:
     from .viewer import Viewer
 
-    if cam.call("getPostviewImageSize")[0] != "Original":
-        cam.call("setPostviewImageSize", "Original")
+    _use_postview(cam, "Original")
     Viewer(cam, args.output or cfg.outdir).run()
 
 
@@ -178,8 +219,9 @@ def cmd_call(cfg: Config, cam: Camera, args) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="qx", description="Control a Sony QX-series camera (QX10, QX100) over Wi-Fi")
-    parser.add_argument("-c", "--camera", type=str.lower, help="camera profile from .env (e.g. qx10, qx100)")
+    parser = argparse.ArgumentParser(prog="qx", description="Control a Sony camera (QX10, QX100, a6300, ...) over Wi-Fi")
+    parser.add_argument("-c", "--camera", type=str.lower, help="camera profile from .env (e.g. qx10, qx100, a6300); "
+                        "default: the one the Wi-Fi adapter is joined to")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("connect", help="join a camera's Wi-Fi (uses sudo nmcli and .env; picks the one in range)").set_defaults(
@@ -230,11 +272,13 @@ def main() -> None:
 
     args = parser.parse_args()
     cfg = Config.load()
-    cam = Camera(cfg.endpoint)
+    cam = Camera(cfg.endpoint_for(args.camera or _joined_camera(cfg)))
     try:
+        if args.command not in ("connect", "call"):
+            cam.ensure_rec_mode()
         args.func(cfg, cam, args)
     except CameraError as e:
-        sys.exit(f"camera: {e}")
+        sys.exit(f"camera: {e}{_unsupported_hint(cam, e)}")
     except OSError as e:
         if args.command == "connect":
             raise

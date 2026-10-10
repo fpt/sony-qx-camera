@@ -1,9 +1,12 @@
 # qx10
 
-Control Sony **QX-series** lens-style cameras (DSC-QX10, DSC-QX100) from
-Linux: live preview, shutter, zoom, touch AF, movie recording, settings
-(including aperture and shutter priority on the QX100), and automatic
-download of full-resolution photos.
+Control Sony cameras that speak the Wi-Fi **Camera Remote API** from Linux:
+live preview, shutter, zoom, touch AF, movie recording, settings, and
+automatic download of full-resolution photos.
+
+Tested with the QX-series lens-style cameras (DSC-QX10, DSC-QX100), an
+Alpha a6300 (ILCE-6300), and an Alpha 7R III (ILCE-7RM3). Other bodies with Sony's "Smart Remote Control" app
+(a6000, a7 II, RX100 III/IV, ...) should work similarly.
 
 The command is `qx` (also installed as `qx10`).
 
@@ -16,8 +19,8 @@ Each camera has two interfaces:
 
 | Interface | What it does |
 |---|---|
-| USB (QX10 `054c:0751`) | Plain mass storage only (microSD card + a 1 MB `PMHOME` partition). No PTP/MTP, so gphoto2 can't control it. Also charges. |
-| Wi-Fi (2.4 GHz only) | Sony **Camera Remote API**: JSON-RPC over HTTP at `http://10.0.0.1:10000/sony/camera`, plus an MJPEG-like liveview stream. This is what this tool uses. |
+| USB (QX10/QX100) | Plain mass storage only (microSD card + a 1 MB `PMHOME` partition). No PTP/MTP, so gphoto2 can't control it. Also charges. |
+| Wi-Fi (2.4 GHz only) | Sony **Camera Remote API**: JSON-RPC over HTTP, plus an MJPEG-like liveview stream. QX cameras answer at `http://10.0.0.1:10000/sony/camera`, the a6300 at `http://192.168.122.1:8080/sony/camera`, the a7R III at `http://192.168.122.1:10000/sony/camera`. This is what this tool uses. |
 
 A camera turns Wi-Fi off while it's in USB mass-storage mode. Power it
 from a plain USB charger (or the battery) instead.
@@ -40,6 +43,9 @@ QX10_SSID="DIRECT-XXXX:DSC-QX10"
 QX10_PASSWORD="XXXXXXXX"
 QX100_SSID="DIRECT-XXXX:DSC-QX100"   # optional; found by scanning if omitted
 QX100_PASSWORD="XXXXXXXX"
+A6300_SSID="DIRECT-XXXX:ILCE-6300"
+A6300_PASSWORD="XXXXXXXX"
+A6300_ENDPOINT=http://192.168.122.1:8080/sony/camera   # bodies not at the QX address
 QX_IFACE=wlx...                      # optional: which Wi-Fi adapter to use (see `nmcli dev`)
 ```
 
@@ -50,8 +56,9 @@ uv run qx connect           # joins whichever configured camera is in range
 uv run qx -c qx100 connect  # or pick one explicitly
 ```
 
-Only one camera can be joined at a time per Wi-Fi adapter. Both cameras use
-the same address, so all other commands work with whichever is joined.
+Only one camera can be joined at a time per Wi-Fi adapter. Other commands
+use the address of whichever camera the adapter is joined to (`QX_IFACE`
+must be set for that), or of the one named with `-c`.
 
 The profile has `ipv4.never-default yes`, so your normal internet keeps
 going over Ethernet or your other Wi-Fi, and `autoconnect no`, so it only
@@ -100,6 +107,20 @@ What you can set depends on the camera and its exposure `mode`:
 | `shutter` | – | `Shutter` mode, 30"–1/2000 |
 | `focus` | – | `AF-S`, `MF` (no remote focus drive) |
 
+On the **a6300**, exposure mode, aperture, shutter speed, ISO, and EV follow
+the physical mode dial and can't be changed remotely in iAuto. Focus mode
+(`AF-S`, `AF-C`, `DMF`, `MF`), self-timer, and postview size can. Touch AF
+needs an AF focus mode. Zoom is Clear Image Zoom (digital) unless you use a
+power-zoom lens. The tool sends `startRecMode` automatically, which Alpha
+bodies need before they'll shoot.
+
+On the **a7R III** (built-in "Ctrl w/ Smartphone"), ISO, white balance, EV,
+self-timer, flash, and continuous mode can be set remotely, while exposure mode,
+aperture, and shutter follow the dial. There's no remote zoom, touch AF, or
+focus-mode control, and it only sends a ~1616x1080 copy of each shot (the
+original stays on the card). If the shutter fails because AF hasn't locked,
+the tool half-presses to focus and retries.
+
 Example: `qx set mode Aperture && qx set fnumber 2.8`.
 
 `ev` is in 1/3 EV steps (QX10 `-6`…`6`, QX100 `-9`…`9`). `size` takes
@@ -113,6 +134,10 @@ Example: `qx set mode Aperture && qx set fnumber 2.8`.
   this tool doesn't implement yet.
 - The QX10 has no aperture or shutter control (Intelligent Auto, Superior
   Auto, and Program Auto only).
+- The a6300 needs the "Smart Remote Control" (or built-in "Smart Remote
+  Embedded") app running on the camera. Sony's PlayMemories Camera Apps store
+  closed on 2025-08-31, so you can no longer install the full app if it isn't
+  already on the camera.
 - The QX100 needs firmware v3.00. On v1.00 most settings return error 403.
   Sony's updater runs on Windows or Mac only.
 - Only one client at a time. Close the phone app first.

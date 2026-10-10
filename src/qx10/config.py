@@ -1,7 +1,8 @@
 """Settings from environment variables, with a project-level .env as fallback.
 
-Each camera is a profile named by a prefix, e.g. QX10_SSID / QX10_PASSWORD
-and QX100_SSID / QX100_PASSWORD. Shared settings use the QX_ prefix.
+Each camera is a profile named by a prefix, e.g. QX10_SSID / QX10_PASSWORD,
+QX100_*, A6300_*, with an optional <PREFIX>_ENDPOINT for bodies that don't
+answer at the QX default address. Shared settings use the QX_ prefix.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ class CameraProfile:
     name: str  # lower-case profile name, also the NetworkManager connection name
     ssid: str | None
     password: str | None
+    endpoint: str | None = None
 
 
 @dataclass
@@ -53,19 +55,23 @@ class Config:
     @classmethod
     def load(cls) -> Config:
         dotenv = find_dotenv()
-        values = (load_dotenv(dotenv) if dotenv else {}) | {
-            k: v for k, v in os.environ.items() if k.startswith("QX") and v
+        file_values = load_dotenv(dotenv) if dotenv else {}
+        # The environment overrides .env, but only for keys this tool owns, so that
+        # unrelated variables like DB_PASSWORD don't turn into camera profiles.
+        values = file_values | {
+            k: v for k, v in os.environ.items() if v and (k.startswith("QX") or k in file_values)
         }
 
         cameras = {}
         for key in values:
-            m = re.fullmatch(r"(QX\d+)_(SSID|PASSWORD)", key)
-            if m:
+            m = re.fullmatch(r"([A-Z][A-Z0-9]*)_(SSID|PASSWORD)", key)
+            if m and m.group(1) != "QX":
                 prefix = m.group(1)
                 cameras[prefix.lower()] = CameraProfile(
                     name=prefix.lower(),
                     ssid=values.get(f"{prefix}_SSID"),
                     password=values.get(f"{prefix}_PASSWORD"),
+                    endpoint=values.get(f"{prefix}_ENDPOINT"),
                 )
 
         return cls(
@@ -75,3 +81,8 @@ class Config:
             endpoint=values.get("QX_ENDPOINT", DEFAULT_ENDPOINT),
             outdir=Path(values.get("QX_OUTDIR", "photos")).expanduser(),
         )
+
+    def endpoint_for(self, camera: str | None) -> str:
+        """Endpoint of the named profile, falling back to QX_ENDPOINT / the QX default."""
+        profile = self.cameras.get(camera or "")
+        return (profile and profile.endpoint) or self.endpoint
